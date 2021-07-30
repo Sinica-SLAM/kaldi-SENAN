@@ -115,7 +115,7 @@ void NnetComputeProb::ProcessOutputs(const NnetExample &eg,
         BaseFloat tot_weight, tot_objf;
         bool supply_deriv = config_.compute_deriv;
         ComputeObjectiveFunction(io.features, obj_type, io.name,
-                                 supply_deriv, computer,
+                                 io.frame_weights, supply_deriv, computer,
                                  &tot_weight, &tot_objf);
         SimpleObjectiveInfo &totals = objf_info_[io.name];
         totals.tot_weight += tot_weight;

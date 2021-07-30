@@ -207,7 +207,7 @@ void NnetTrainer::ProcessOutputs(bool is_backstitch_step2,
       BaseFloat tot_weight, tot_objf;
       bool supply_deriv = true;
       ComputeObjectiveFunction(io.features, obj_type, io.name,
-                               supply_deriv, computer,
+                               io.frame_weights, supply_deriv, computer,
                                &tot_weight, &tot_objf);
       objf_info_[io.name + suffix].UpdateStats(io.name + suffix,
                                       config_.print_interval,
@@ -339,6 +339,7 @@ NnetTrainer::~NnetTrainer() {
 void ComputeObjectiveFunction(const GeneralMatrix &supervision,
                               ObjectiveType objective_type,
                               const std::string &output_name,
+                              const BaseFloat frame_weights,
                               bool supply_deriv,
                               NnetComputer *computer,
                               BaseFloat *tot_weight,
@@ -361,7 +362,7 @@ void ComputeObjectiveFunction(const GeneralMatrix &supervision,
           // because after the LogSoftmaxLayer, the output is already in the form
           // of log-likelihoods that are normalized to sum to one.
           *tot_weight = cu_post.Sum();
-          *tot_objf = TraceMatSmat(output, cu_post, kTrans);
+          *tot_objf = TraceMatSmat(output, cu_post, kTrans) * frame_weights;
           if (supply_deriv) {
             CuMatrix<BaseFloat> output_deriv(output.NumRows(), output.NumCols(),
                                              kUndefined);
@@ -375,7 +376,7 @@ void ComputeObjectiveFunction(const GeneralMatrix &supervision,
           // but we don't anticipate this code branch being used in many cases.
           CuMatrix<BaseFloat> cu_post(supervision.GetFullMatrix());
           *tot_weight = cu_post.Sum();
-          *tot_objf = TraceMatMat(output, cu_post, kTrans);
+          *tot_objf = TraceMatMat(output, cu_post, kTrans) * frame_weights;
           if (supply_deriv)
             computer->AcceptInput(output_name, &cu_post);
           break;
@@ -386,7 +387,7 @@ void ComputeObjectiveFunction(const GeneralMatrix &supervision,
           CuMatrix<BaseFloat> cu_post;
           cu_post.Swap(&post);
           *tot_weight = cu_post.Sum();
-          *tot_objf = TraceMatMat(output, cu_post, kTrans);
+          *tot_objf = TraceMatMat(output, cu_post, kTrans) * frame_weights;
           if (supply_deriv)
             computer->AcceptInput(output_name, &cu_post);
           break;
@@ -402,7 +403,7 @@ void ComputeObjectiveFunction(const GeneralMatrix &supervision,
       diff.CopyFromGeneralMat(supervision);
       diff.AddMat(-1.0, output);
       *tot_weight = diff.NumRows();
-      *tot_objf = -0.5 * TraceMatMat(diff, diff, kTrans);
+      *tot_objf = -0.5 * frame_weights * TraceMatMat(diff, diff, kTrans);
       if (supply_deriv)
         computer->AcceptInput(output_name, &diff);
       break;

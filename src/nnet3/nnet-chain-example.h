@@ -119,6 +119,10 @@ struct NnetChainExample {
   /// be just one member with name == "output".
   std::vector<NnetChainSupervision> outputs;
 
+  /// "outputs_ae" contains the output for DcAE. There will normally
+  /// be just one member with name == "output_ae".
+  std::vector<NnetIo> outputs_ae;
+
   void Write(std::ostream &os, bool binary) const;
   void Read(std::istream &is, bool binary);
 
@@ -132,7 +136,8 @@ struct NnetChainExample {
   NnetChainExample(const NnetChainExample &other);
 
   bool operator == (const NnetChainExample &other) const {
-    return inputs == other.inputs && outputs == other.outputs;
+    return inputs == other.inputs && outputs == other.outputs &&
+           outputs_ae == other.outputs_ae;
   }
 };
 

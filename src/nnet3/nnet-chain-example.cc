@@ -151,6 +151,16 @@ void NnetChainExample::Write(std::ostream &os, bool binary) const {
     outputs[i].Write(os, binary);
     if (!binary) os << '\n';
   }
+  WriteToken(os, binary, "<NumOutputsAe>");
+  size = outputs_ae.size();
+//   KALDI_ASSERT(size > 0 && "Attempting to write NnetChainExample with no outputs_ae");
+  WriteBasicType(os, binary, size);
+  if (!binary) os << '\n';
+  for (int32 i = 0; i < size; i++) {
+    outputs_ae[i].Write(os, binary);
+    if (!binary) os << '\n';
+  }
+
   WriteToken(os, binary, "</Nnet3ChainEg>");
 }
 
@@ -171,12 +181,19 @@ void NnetChainExample::Read(std::istream &is, bool binary) {
   outputs.resize(size);
   for (int32 i = 0; i < size; i++)
     outputs[i].Read(is, binary);
+  ExpectToken(is, binary, "<NumOutputsAe>");
+  ReadBasicType(is, binary, &size);
+  if (size < 0 || size > 1000000) 
+    KALDI_ERR << "Invalid size " << size;
+  outputs_ae.resize(size);
+  for (int32 i = 0; i < size; i++) outputs_ae[i].Read(is, binary);
   ExpectToken(is, binary, "</Nnet3ChainEg>");
 }
 
 void NnetChainExample::Swap(NnetChainExample *other) {
   inputs.swap(other->inputs);
   outputs.swap(other->outputs);
+  outputs_ae.swap(other->outputs_ae);
 }
 
 void NnetChainExample::Compress() {
@@ -184,10 +201,16 @@ void NnetChainExample::Compress() {
   // calling features.Compress() will do nothing if they are sparse or already
   // compressed.
   for (; iter != end; ++iter) iter->features.Compress();
+
+  iter = outputs_ae.begin();
+  end = outputs_ae.end();
+  // calling features.Compress() will do nothing if they are sparse or already
+  // compressed.
+  for (; iter != end; ++iter) iter->features.Compress();
 }
 
 NnetChainExample::NnetChainExample(const NnetChainExample &other):
-    inputs(other.inputs), outputs(other.outputs) { }
+    inputs(other.inputs), outputs(other.outputs), outputs_ae(other.outputs_ae) { }
 
 
 // called from MergeChainExamplesInternal, this function merges the Supervision
@@ -285,6 +308,29 @@ void MergeChainExamples(bool compress,
     MergeSupervision(to_merge,
                      &(output->outputs[i]));
   }
+
+  // Now deal with the DcAE 'outputs_ae'.  There will
+  // normally be just one of these, with name "output_ae", but we
+  // handle the more general case.
+  int32 num_output_ae_size = (*input)[0].outputs_ae.size();
+  output->outputs_ae.resize(num_output_ae_size);
+  for (int32 i = 0; i < num_output_ae_size; i++) {
+    std::vector<NnetExample> eg_outputs_ae(num_examples);
+    for (int32 j = 0; j < num_examples; j++) {
+      eg_outputs_ae[j].io.resize(1);
+      eg_outputs_ae[j].io[0].Swap(&((*input)[j].outputs_ae[i]));
+      }
+    
+    NnetExample output_ae_out;
+    MergeExamples(eg_outputs_ae, compress, &output_ae_out);
+    // swap the outputs_ae back so that they are not really changed.
+    for (int32 j = 0; j < num_examples; j++) {
+      eg_outputs_ae[j].io.resize(1);
+      eg_outputs_ae[j].io[0].Swap(&((*input)[j].outputs_ae[i]));
+    }
+    // write to 'output->outputs_ae'
+    output_ae_out.io[0].Swap(&(output->outputs_ae[i]));
+  }
 }
 
 void GetChainComputationRequest(const Nnet &nnet,
@@ -297,7 +343,7 @@ void GetChainComputationRequest(const Nnet &nnet,
   request->inputs.clear();
   request->inputs.reserve(eg.inputs.size());
   request->outputs.clear();
-  request->outputs.reserve(eg.outputs.size() * 2);
+  request->outputs.reserve(eg.outputs.size() * 2 + eg.outputs_ae.size());
   request->need_model_derivative = need_model_derivative;
   request->store_component_stats = store_component_stats;
   for (size_t i = 0; i < eg.inputs.size(); i++) {
@@ -342,6 +388,20 @@ void GetChainComputationRequest(const Nnet &nnet,
       io_spec_xent.name = name + "-xent";
       io_spec_xent.has_deriv = use_xent_derivative;
     }
+  }
+  for (size_t i = 0; i < eg.outputs_ae.size(); i++) {
+    const NnetIo &io = eg.outputs_ae[i];
+    const std::string &name = io.name;
+    int32 node_index = nnet.GetNodeIndex(name);
+    if (node_index == -1 || !nnet.IsOutputNode(node_index))
+      KALDI_ERR << "Nnet example has output_ae named '" << name
+                << "', but no such output_ae node is in the network.";
+
+    request->outputs.resize(request->outputs.size() + 1);
+    IoSpecification &io_spec = request->outputs.back();
+    io_spec.name = name;
+    io_spec.indexes = io.indexes;
+    io_spec.has_deriv = need_model_derivative;
   }
   // check to see if something went wrong.
   if (request->inputs.empty())
@@ -418,6 +478,28 @@ void ShiftChainExampleTimes(int32 frame_shift,
     for (; indexes_iter != indexes_end; ++indexes_iter)
       indexes_iter->t += supervision_frame_shift;
   }
+
+  //output_ae
+  std::vector<NnetIo>::iterator dcae_iter = eg->outputs_ae.begin(),
+                                dcae_end = eg->outputs_ae.end();
+  for (; dcae_iter != dcae_end; ++dcae_iter) {
+    std::vector<Index> &indexes = dcae_iter->indexes;
+    KALDI_ASSERT(indexes.size() >= 2 && indexes[0].n == indexes[1].n &&
+                 indexes[0].x == indexes[1].x);
+    int32 frame_subsampling_factor = indexes[1].t - indexes[0].t;
+    KALDI_ASSERT(frame_subsampling_factor > 0);
+
+    // We need to shift by a multiple of frame_subsampling_factor.
+    // Round to the closest multiple.
+    int32 supervision_frame_shift =
+        frame_subsampling_factor *
+        std::floor(0.5 + (frame_shift * 1.0 / frame_subsampling_factor));
+    if (supervision_frame_shift == 0) continue;
+    std::vector<Index>::iterator indexes_iter = indexes.begin(),
+                                 indexes_end = indexes.end();
+    for (; indexes_iter != indexes_end; ++indexes_iter)
+      indexes_iter->t += supervision_frame_shift;
+  }
 }
 
 
@@ -428,13 +510,17 @@ size_t NnetChainExampleStructureHasher::operator () (
   size_t size = eg.inputs.size(), ans = size * 35099;
   for (size_t i = 0; i < size; i++)
     ans = ans * 19157 + io_hasher(eg.inputs[i]);
+  size = eg.outputs.size();
   for (size_t i = 0; i < eg.outputs.size(); i++) {
-    const NnetChainSupervision &sup = eg.outputs[i];
-    StringHasher string_hasher;
-    IndexVectorHasher indexes_hasher;
-    ans = ans * 17957 +
-        string_hasher(sup.name) + indexes_hasher(sup.indexes);
+  const NnetChainSupervision &sup = eg.outputs[i];
+  StringHasher string_hasher;
+  IndexVectorHasher indexes_hasher;
+  ans = ans * 17957 +
+      string_hasher(sup.name) + indexes_hasher(sup.indexes);
   }
+  size = eg.outputs_ae.size();
+  for (size_t i = 0; i < size; i++)
+    ans = ans * 19157 + io_hasher(eg.outputs_ae[i]);
   return ans;
 }
 
@@ -443,7 +529,8 @@ bool NnetChainExampleStructureCompare::operator () (
     const NnetChainExample &b) const {
   NnetIoStructureCompare io_compare;
   if (a.inputs.size() != b.inputs.size() ||
-      a.outputs.size() != b.outputs.size())
+      a.outputs.size() != b.outputs.size() ||
+      a.outputs_ae.size() != b.outputs_ae.size())
     return false;
   size_t size = a.inputs.size();
   for (size_t i = 0; i < size; i++)
@@ -453,6 +540,10 @@ bool NnetChainExampleStructureCompare::operator () (
   for (size_t i = 0; i < size; i++)
     if (a.outputs[i].name != b.outputs[i].name ||
         a.outputs[i].indexes != b.outputs[i].indexes)
+      return false;
+  size = a.outputs_ae.size();
+  for (size_t i = 0; i < size; i++)
+    if (!io_compare(a.outputs_ae[i], b.outputs_ae[i])) 
       return false;
   return true;
 }
@@ -469,6 +560,10 @@ int32 GetNnetChainExampleSize(const NnetChainExample &a) {
     int32 s = a.outputs[i].indexes.size();
     if (s > ans)
       ans = s;
+  }
+  for (size_t i = 0; i < a.outputs_ae.size(); i++) {
+    int32 s = a.outputs_ae[i].indexes.size();
+    if (s > ans) ans = s;
   }
   return ans;
 }

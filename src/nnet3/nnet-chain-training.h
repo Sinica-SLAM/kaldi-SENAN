@@ -28,6 +28,7 @@
 #include "nnet3/nnet-training.h"
 #include "chain/chain-training.h"
 #include "chain/chain-den-graph.h"
+#include "nnet3/nnet-training.h"
 
 namespace kaldi {
 namespace nnet3 {

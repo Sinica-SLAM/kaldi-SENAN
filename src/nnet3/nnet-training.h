@@ -264,6 +264,7 @@ class NnetTrainer {
 void ComputeObjectiveFunction(const GeneralMatrix &supervision,
                               ObjectiveType objective_type,
                               const std::string &output_name,
+                              const BaseFloat frame_weights,
                               bool supply_deriv,
                               NnetComputer *computer,
                               BaseFloat *tot_weight,

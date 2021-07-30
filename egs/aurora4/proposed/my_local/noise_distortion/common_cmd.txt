@@ -1,0 +1,12 @@
+# raw 2 wav
+sox -B -r 16k -e signed -b 16 -c 1 -t raw 011c020a.wv2 -t wav 011c020a.wav
+
+# wav 2 spectrogram
+sox input.wav -n spectrogram -o output.png
+
+# compute the difference of 2 files
+(1) sox -m -v 1 sound-original.wav -v -1 sound-altered.wav sound-difference.wav
+(2) sox -m -v 1 '|sox -B -r 16k -e signed -b 16 -c 1 -t raw /mnt/HDD/dataset/Aurora4/4A/train_clean/011_16k/011c0205.wv1 -t wav -' \
+           -v -1 '|sox -B -r 16k -e signed -b 16 -c 1 -t raw /mnt/HDD/dataset/Aurora4/4A/train_multi/011_16k/011c0205.wv1 -t wav -' ~/out.wav
+(3) sox -m -v 1 -B -r 16k -e signed -b 16 -c 1 -t raw /mnt/HDD/dataset/Aurora4/4A/train_clean/011_16k/011c0205.wv1 \
+           -v -1 -B -r 16k -e signed -b 16 -c 1 -t raw /mnt/HDD/dataset/Aurora4/4A/train_multi/011_16k/011c0205.wv1 ~/out.wav
