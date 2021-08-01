@@ -23,4 +23,4 @@ or
 local/chain/tuning/run_cnn-tdnn-1c_mtae_mfcc-mfcc-cont_noise-stats_specaugment.sh # CNN-TDNN-F as AM + SpecAugment + proposed model 
 ```
 
-2. The weight for the two output layers can be changed by modifying frame_weight_dae and frame_weight_dspae in run_{tdnn-1a,cnn-tdnn-1c}_mtae_*.sh
+2. The weight for the two output layers can be changed by modifying frame_weight_dae and frame_weight_dspae in run_{tdnn-1a,cnn-tdnn-1c}\_mtae\_*.sh
