@@ -215,10 +215,7 @@ if [ $stage -le 16 ]; then
   linear-component name=ivector-linear $ivector_affine_opts dim=200 input=ReplaceIndex(ivector, t, 0)
   batchnorm-component name=ivector-batchnorm target-rms=0.025
 
-  no-op-component name=context-dae input=Append(prefinal-dae@-1, prefinal-dae@0, prefinal-dae@1)
-  stats-layer name=stats-dspae config=mean+stddev(-100:1:1:100) input=prefinal-dspae
-  no-op-component name=info-dae-dspae input=Append(context-dae, stats-dspae)
-  combine-feature-maps-layer name=combine_inputs input=Append(idct-batchnorm, ivector-batchnorm, info-dae-dspae) num-filters1=1 num-filters2=5 num-filters3=5 height=40
+  combine-feature-maps-layer name=combine_inputs input=Append(idct-batchnorm, ivector-batchnorm) num-filters1=1 num-filters2=5 height=40
 
   conv-relu-batchnorm-layer name=cnn1 $cnn_opts height-in=40 height-out=40 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=48 learning-rate-factor=0.333 max-change=0.25
   conv-relu-batchnorm-layer name=cnn2 $cnn_opts height-in=40 height-out=40 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=48
@@ -227,6 +224,11 @@ if [ $stage -le 16 ]; then
   conv-relu-batchnorm-layer name=cnn5 $cnn_opts height-in=20 height-out=10 height-subsample-out=2 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=64
   conv-relu-batchnorm-layer name=cnn6 $cnn_opts height-in=10 height-out=5 height-subsample-out=2 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=128
 
+  # dae / dspae
+  no-op-component name=context-dae input=Append(prefinal-dae@-1, prefinal-dae@0, prefinal-dae@1)
+  stats-layer name=stats-dspae config=mean+stddev(-100:1:1:100) input=prefinal-dspae
+  linear-component $linear_opts name=affine1 input=Append(cnn6, context-dae, stats-dspae)
+  
   # the first TDNN-F layer has no bypass (since dims don't match), and a larger bottleneck so the
   # information bottleneck doesn't become a problem.
   tdnnf-layer name=tdnnf7 $tdnnf_first_opts dim=1024 bottleneck-dim=256 time-stride=0

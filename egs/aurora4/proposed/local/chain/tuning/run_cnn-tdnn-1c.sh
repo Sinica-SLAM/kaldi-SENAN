@@ -50,12 +50,10 @@ chunk_width=140,100,160
 # training options
 srand=0
 remove_egs=true
-num_of_epoch=25
-frame_weight_dae=0.04
-frame_weight_dspae=0.04
+num_of_epoch=8
 initial_effective_lrate=0.0005
 final_effective_lrate=0.00005
-argu_desc="e${num_of_epoch}_fdae${frame_weight_dae}_fdspae${frame_weight_dspae}_il${initial_effective_lrate}_fl${final_effective_lrate}"
+argu_desc="e${num_of_epoch}_il${initial_effective_lrate}_fl${final_effective_lrate}"
 
 #decode options
 test_online_decoding=false  # if true, it will run the last decoding stage.
@@ -83,16 +81,15 @@ local/nnet3/run_ivector_common.sh \
   --num-threads-ubm $num_threads_ubm \
   --nnet3-affix "$nnet3_affix"
 
+
+
 gmm_dir=exp/${gmm}
 ali_dir=exp/${gmm}_ali_${train_set}_sp
 lat_dir=exp/chain${nnet3_affix}/${gmm}_${train_set}_sp_lats
-dir=exp/chain${nnet3_affix}/cnn-tdnn-1c_mtae_fbank-mfcc-cont_noise-stats_specaugment/${argu_desc}
+dir=exp/chain${nnet3_affix}/cnn-tdnn-1c/${argu_desc}
 train_data_dir=data/${train_set}_sp_hires
 train_ivector_dir=exp/nnet3${nnet3_affix}/ivectors_${train_set}_sp_hires
 lores_train_data_dir=data/${train_set}_sp
-
-target_scp_dae=data/${target_set}_sp_hires/feats.target.scp
-target_scp_dspae=data/train_si84_noise_mismatch_sp_hires/feats.scp
 
 # note: you don't necessarily have to change the treedir name
 # each time you do a new experiment-- only if you change the
@@ -184,37 +181,11 @@ if [ $stage -le 16 ]; then
 
   idct-layer name=idct input=input dim=40 cepstral-lifter=22 affine-transform-file=$dir/configs/idct.mat
   batchnorm-component name=idct-batchnorm input=idct
-  spec-augment-layer name=spec-augment freq-max-proportion=0.5 time-zeroed-proportion=0.2 time-mask-max-frames=20
-
-  # Denoise Autoencoder + deSpeech Autoencoder
-  relu-renorm-layer name=tdnn1 dim=1024
-
-  relu-renorm-layer name=tdnn2-dae dim=256 input=tdnn1
-  relu-renorm-layer name=tdnn2-shared dim=768 input=tdnn1
-  relu-renorm-layer name=tdnn2-dspae dim=256 input=tdnn1
-
-  relu-renorm-layer name=tdnn3-dae dim=512 input=Append(tdnn2-dae, tdnn2-shared)
-  relu-renorm-layer name=tdnn3-shared dim=512 input=Append(tdnn2-dae, tdnn2-shared, tdnn2-dspae)
-  relu-renorm-layer name=tdnn3-dspae dim=512 input=Append(tdnn2-shared, tdnn2-dspae)
-
-  relu-renorm-layer name=tdnn4-dae dim=768 input=Append(tdnn3-dae, tdnn3-shared)
-  relu-renorm-layer name=tdnn4-shared dim=256 input=Append(tdnn3-dae, tdnn3-shared, tdnn3-dspae)
-  relu-renorm-layer name=tdnn4-dspae dim=768 input=Append(tdnn3-shared, tdnn3-dspae)
-
-  relu-renorm-layer name=tdnn5-dae dim=1024 input=Append(tdnn4-dae, tdnn4-shared)
-  relu-renorm-layer name=tdnn5-dspae dim=1024 input=Append(tdnn4-shared, tdnn4-dspae)
-
-  affine-layer name=prefinal-dae dim=40 input=tdnn5-dae
-  affine-layer name=prefinal-dspae dim=40 input=tdnn5-dspae
-
-  output name=output-dae objective-type=quadratic input=prefinal-dae
-  output name=output-dspae objective-type=quadratic input=prefinal-dspae
-
-  # AM  
+  
   linear-component name=ivector-linear $ivector_affine_opts dim=200 input=ReplaceIndex(ivector, t, 0)
   batchnorm-component name=ivector-batchnorm target-rms=0.025
-  
-  combine-feature-maps-layer name=combine_inputs input=Append(spec-augment, ivector-batchnorm) num-filters1=1 num-filters2=5 height=40
+
+  combine-feature-maps-layer name=combine_inputs input=Append(idct-batchnorm, ivector-batchnorm) num-filters1=1 num-filters2=5 height=40
 
   conv-relu-batchnorm-layer name=cnn1 $cnn_opts height-in=40 height-out=40 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=48 learning-rate-factor=0.333 max-change=0.25
   conv-relu-batchnorm-layer name=cnn2 $cnn_opts height-in=40 height-out=40 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=48
@@ -222,11 +193,6 @@ if [ $stage -le 16 ]; then
   conv-relu-batchnorm-layer name=cnn4 $cnn_opts height-in=20 height-out=20 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=64
   conv-relu-batchnorm-layer name=cnn5 $cnn_opts height-in=20 height-out=10 height-subsample-out=2 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=64
   conv-relu-batchnorm-layer name=cnn6 $cnn_opts height-in=10 height-out=5 height-subsample-out=2 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=128
-
-  # dae / dspae
-  no-op-component name=context-dae input=Append(prefinal-dae@-1, prefinal-dae@0, prefinal-dae@1)
-  stats-layer name=stats-dspae config=mean+stddev(-100:1:1:100) input=prefinal-dspae
-  linear-component $linear_opts name=affine1 input=Append(cnn6, context-dae, stats-dspae)
 
   # the first TDNN-F layer has no bypass (since dims don't match), and a larger bottleneck so the
   # information bottleneck doesn't become a problem.
@@ -257,7 +223,7 @@ if [ $stage -le 17 ]; then
      /export/b0{4,5,6,7}/$USER/kaldi-data/egs/wsj-$(date +'%m_%d_%H_%M')/s5/$dir/egs/storage $dir/egs/storage
   fi
 
-  steps/chain/train_mtae.py --stage=$train_stage \
+  steps/chain/train.py --stage=$train_stage \
     --cmd="$decode_cmd" \
     --feat.online-ivector-dir=$train_ivector_dir \
     --feat.cmvn-opts="--norm-means=false --norm-vars=false" \
@@ -278,8 +244,6 @@ if [ $stage -le 17 ]; then
     --trainer.num-chunk-per-minibatch=128,64 \
     --trainer.optimization.momentum=0.0 \
     --egs.chunk-width=$chunk_width \
-    --egs.frame-weight-dae=$frame_weight_dae \
-    --egs.frame-weight-dspae=$frame_weight_dspae \
     --egs.dir="$common_egs_dir" \
     --egs.opts="--frames-overlap-per-eg 0" \
     --cleanup.remove-egs=$remove_egs \
@@ -288,8 +252,6 @@ if [ $stage -le 17 ]; then
     --feat-dir=$train_data_dir \
     --tree-dir=$tree_dir \
     --lat-dir=$lat_dir \
-    --target_scp_dae=$target_scp_dae \
-    --target_scp_dspae=$target_scp_dspae \
     --dir=$dir  || exit 1;
 fi
 
